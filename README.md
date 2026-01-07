@@ -564,7 +564,8 @@ make shell-postgres
 ### Documentation
 - [Architecture Diagram](docs/architecture.md)
 - [Data Model Details](docs/data_model.md)
-- [API Documentation](docs/api.md)
+- [Visual Diagrams](docs/diagrams.md)
+- [Architecture Image](docs/diagrams/architecture.png)
 
 ### External Links
 - [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
