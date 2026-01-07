@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  spark-master:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=nyc_taxi
+      - POSTGRES_USER=taxi_user
+      - POSTGRES_PASSWORD=taxi_pass
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "4040:4040"
+    volumes:
+      - ./spark:/opt/spark-app
+      - ./data:/data
+      - spark-logs:/opt/spark/logs
+    networks:
+      - taxi-network
+
+  spark-worker:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+    depends_on:
+      - spark-master
+    volumes:
+      - ./spark:/opt/spark-app
+      - ./data:/data
+    networks:
+      - taxi-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-taxi
+    environment:
+      - POSTGRES_DB=nyc_taxi
+      - POSTGRES_USER=taxi_user
+      - POSTGRES_PASSWORD=taxi_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql
+    networks:
+      - taxi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taxi_user -d nyc_taxi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://taxi_user:taxi_pass@postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=8xZq5sXmK9jPnR2wVbT4yH7cN3gF6dL1
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./spark:/opt/spark-app
+      - ./data:/data
+      - airflow-logs:/opt/airflow/logs
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - taxi-network
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
+               airflow webserver"
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://taxi_user:taxi_pass@postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=8xZq5sXmK9jPnR2wVbT4yH7cN3gF6dL1
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./spark:/opt/spark-app
+      - ./data:/data
+      - airflow-logs:/opt/airflow/logs
+    depends_on:
+      - airflow-webserver
+    networks:
+      - taxi-network
+    command: airflow scheduler
+
+networks:
+  taxi-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  spark-logs:
+  airflow-logs:
